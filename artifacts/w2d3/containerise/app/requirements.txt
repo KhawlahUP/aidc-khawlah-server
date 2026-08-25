@@ -1,0 +1,25 @@
+# PINNED. These exact versions were confirmed working end-to-end (GREEN CHECK:
+# PASS) by a classmate's real run against this same lab. Still: open your own
+# course's PINS.md, find the "serving service (weeks 2, tier 0 CPU path)"
+# table, and confirm these match. If your PINS.md gives different numbers,
+# use those -- the point of step 1 is pinning from YOUR source of truth, not
+# copying a number that happened to work for someone else.
+#
+# main.py in this app/ folder does not depend on being on exactly transformers
+# 4.46: the chat route calls apply_chat_template(..., return_dict=True) and
+# reads encoded["input_ids"] explicitly, which is stable across the pre-5.x
+# and 5.x return-shape change described in the Bug Lab. So even if your
+# PINS.md table lands on a different transformers major, the workaround does
+# not need to change -- just update the pin.
+#
+# ON COLAB: delete the torch line rather than pinning it. Colab ships torch
+# preinstalled and installing a second one breaks the runtime. Pin it locally.
+
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.9.*
+transformers==4.46.2
+torch==2.6.0
+accelerate==1.1.*
+openai==1.54.*
+httpx==0.27.*
