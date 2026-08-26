@@ -31,8 +31,8 @@ Three parts completed today, each in its own subfolder:
 
 ## Screenshots
 
-![server running with volume mounted](images/W2D3-1-container-running.png)
-![green check verify - fresh pull from Docker Hub](images/W2D3-2-green-check-verify.png)
+![server running with volume mounted](artifacts/w2d3/images/W2D3-1-container-running.png)
+![green check verify - fresh pull from Docker Hub](artifacts/w2d3/images/W2D3-2-green-check-verify.png)
 
 ## Notes
 
