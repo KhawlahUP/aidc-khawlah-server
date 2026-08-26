@@ -96,6 +96,77 @@ attempted, since tier 0 was the scored requirement.
 Files: `sanity-harness/app/main.py`, `sanity-harness/app/requirements.txt`,
 `sanity-harness/sanity_harness.py`, `sanity-harness/verify.py`
 
+## Bug Lab: the guard that only guards one door
+
+Given, deliberately broken: `/v1/embeddings` had a guard that *looked* like
+a device check but did nothing (`if DEVICE != "cuda": pass`), and its
+response hard-coded `"device_used": "cuda"` regardless of the real device.
+
+### Reproducing the bug
+
+```powershell
+curl -Method POST http://localhost:8000/v1/embeddings -Body '{}'
+```
+
+```json
+{"vector":[0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1],"device_used":"cuda"}
+```
+
+**200 OK, claiming GPU, on a machine with no GPU.** No error, no warning —
+just a wrong answer that looks completely normal.
+
+![bug reproduced: fake cuda claim on CPU](images/W2D4-10-bug-reproduced-fake-cuda-claim.png)
+
+### Diagnosis
+
+`/v1/chat/completions`'s guard (`if payload.get("require_gpu") and DEVICE
+!= "cuda": raise ...`) actually *does something* with its condition — it
+raises. `/v1/embeddings`'s guard evaluates the same kind of condition, then
+does nothing with the result (`pass`). It has the shape of a check but not
+the behavior of one. A missing guard would at least fail the same way
+everywhere; a guard that silently does nothing looks reviewed and safe when
+it isn't.
+
+### Fix
+
+```python
+@app.post("/v1/embeddings")
+def embeddings(payload: dict):
+    if DEVICE != "cuda":
+        raise HTTPException(400, "Embeddings require a GPU-backed instance; this instance is running in CPU-fallback mode.")
+    return {"vector": [0.1] * 8, "device_used": DEVICE}
+```
+
+Two bugs fixed in the same two lines: the no-op guard now actually raises,
+and the hard-coded `"device_used": "cuda"` was replaced with the real
+`DEVICE` variable — it was lying even on a path that never runs on this
+machine.
+
+### Verify
+
+```powershell
+curl -Method POST http://localhost:8000/v1/embeddings -Body '{}'
+# {"detail":"Embeddings require a GPU-backed instance; this instance is running in CPU-fallback mode."}
+```
+
+![bug fixed: clean 400 refusal with a real message](images/W2D4-11-bug-fixed-clean-400-refusal.png)
+
+```python
+import httpx
+r = httpx.post("http://localhost:8000/v1/embeddings", json={})
+assert r.status_code == 400, f"expected 400 on CPU, got {r.status_code}"
+assert "GPU" in r.json()["detail"]
+print("GREEN CHECK: PASS")
+```
+
+```
+GREEN CHECK: PASS
+```
+
+![official green check for the bug fix](images/W2D4-12-bug-lab-official-green-check.png)
+
+Files: `bug-lab/main.py`
+
 ## Notes
 
 - `app/main.py` was updated to auto-detect the device instead of hard-coding
