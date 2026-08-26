@@ -61,6 +61,41 @@ GREEN CHECK: PASS
 ![Colab probe shows cuda true, 31.4 tokens/s](images/W2D4-7-colab-t4-cuda-true-31tps.png)
 ![final three-part green check pass](images/W2D4-8-final-green-check-pass.png)
 
+## Extra Lab: the device-agnostic sanity harness
+
+A separate toy service in `sanity-harness/`, deliberately isolated from the
+main `/v1` service (own request shape: `{"prompt": ..., "require_gpu": ...}`).
+It proves the service tells the truth about its own device, and refuses a
+GPU-only request with a clean 400 on CPU instead of crashing.
+
+| Check | Result |
+|---|---|
+| `/health` reports device | `{"status":"ok","device":"cpu"}` |
+| Normal request succeeds regardless of device | PASS |
+| `require_gpu=true` on CPU refused cleanly (400, clear message) | PASS |
+| Own `sanity_harness.py` | `GREEN CHECK: PASS` |
+| Official independent `verify.py` | `GREEN CHECK: PASS` |
+
+```
+[PASS] health reports a valid device
+[PASS] normal request succeeds regardless of device
+[PASS] GPU-only request fails cleanly on CPU (400, clear message)
+GREEN CHECK: PASS
+
+server claims device=cpu
+ok  require_gpu refused cleanly on cpu
+GREEN CHECK: PASS
+```
+
+![sanity harness + official verify.py both pass](images/W2D4-9-sanity-harness-both-checks-pass.png)
+
+Tier 0 (the graded run) is the CPU run, run and passing here. The GPU run
+would need this afternoon's Colab half or a tier-1 GPU pod and was not
+attempted, since tier 0 was the scored requirement.
+
+Files: `sanity-harness/app/main.py`, `sanity-harness/app/requirements.txt`,
+`sanity-harness/sanity_harness.py`, `sanity-harness/verify.py`
+
 ## Notes
 
 - `app/main.py` was updated to auto-detect the device instead of hard-coding
