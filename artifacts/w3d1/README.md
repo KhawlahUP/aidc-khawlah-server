@@ -169,3 +169,81 @@ parameter math from week 2 predicts.
 ![bug fixed: correct descending memory order per dtype](images/W3D1-Bug-4-fixed-correct-order.png)
 
 Files: `profile.json`, `batch_check.json`, `bug-lab/` (fix notes)
+
+## Extra Lab: the memory leak hunter
+
+Standalone lab proving, with numbers, whether repeated load-generate-unload
+cycles actually return VRAM to baseline, then deliberately introducing a
+leak, catching it with an automatic detector, and confirming the fix.
+
+### Step 1: reload-loop baseline (no generation, control)
+
+```
+{'cycle': 0, 'after_load_mb': 3134.0, 'after_unload_mb': 3134.0}
+{'cycle': 1, 'after_load_mb': 6268.0, 'after_unload_mb': 3138.0}
+{'cycle': 2, 'after_load_mb': 6268.0, 'after_unload_mb': 3134.0}
+{'cycle': 3, 'after_load_mb': 6268.0, 'after_unload_mb': 3138.0}
+{'cycle': 4, 'after_load_mb': 6268.0, 'after_unload_mb': 3134.0}
+```
+
+`after_unload_mb` stays flat (3134-3138 MB) across all five cycles — the
+small drift is the CUDA caching allocator holding onto freed blocks by
+design, not a leak. `after_load_mb` rises after cycle 0 for the same reason
+(allocator reserves extra headroom after first use); the number that matters
+is `after_unload_mb`, and it never climbs.
+
+### Step 2: a real leak, on purpose
+
+Two causes together: no `torch.no_grad()` (autograd retains the computation
+graph) and appending every output to a list that's never cleared.
+
+```
+{'iter': 0, 'reserved_mb': 6272.0}
+{'iter': 5, 'reserved_mb': 6612.0}
+{'iter': 10, 'reserved_mb': 6952.0}
+{'iter': 15, 'reserved_mb': 7292.0}
+```
+
+Perfectly linear: +340 MB every 5 iterations, exactly 68 MB/iteration.
+
+![leak reproduced: linear climb in resident memory](images/W3D1-Extra-1-leak-reproduced-linear-climb.png)
+
+### Step 3: the leak detector
+
+A least-squares slope over the samples, flagging anything above
+1.0 MB/iteration as leaking:
+
+```python
+{'slope_mb_per_iter': 68.0, 'threshold_mb_per_iter': 1.0, 'leaking': True, 'n_samples': 20}
+```
+
+The detector's own fit (68.0 MB/iter) matches the hand-computed slope from
+Step 2's raw numbers (340 / 5 = 68) exactly.
+
+### Step 4: fix and reconfirm
+
+Wrap inference in `torch.no_grad()` and stop retaining the output tensors:
+
+```python
+{'slope_mb_per_iter': 0.286, 'threshold_mb_per_iter': 1.0, 'leaking': False, 'n_samples': 20}
+```
+
+Slope dropped from 68.0 to 0.286 MB/iteration — effectively flat.
+
+![fixed run correctly flagged as not leaking](images/W3D1-Extra-2-fixed-not-leaking.png)
+
+### Green check
+
+The official verifier refits both slopes independently (plain least squares,
+no numpy) from the raw samples in `leak_report.json`, so a hand-edited
+`leaking` flag cannot pass:
+
+```
+refit leaky slope: 68.000 MB/iter (reported: 68.000)
+refit fixed slope: 0.286 MB/iter (reported: 0.286)
+GREEN CHECK: PASS
+```
+
+![final green check pass, independent slope refit](images/W3D1-Extra-3-final-green-check-pass.png)
+
+Files: `extra-lab/leak_report.json`
