@@ -1,0 +1,17 @@
+{
+  "kb_per_token": 28.0,
+  "block_tokens": 16,
+  "budget_kb": 2097152,
+  "workload_mean_len": 444.4,
+  "slab": {
+    "peak_concurrent": 18,
+    "admitted": 18,
+    "rejected": 42
+  },
+  "blockpool": {
+    "peak_concurrent": 60,
+    "admitted": 60,
+    "rejected": 0
+  },
+  "blockpool_advantage": 3.33
+}
