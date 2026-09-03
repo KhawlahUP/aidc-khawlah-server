@@ -92,30 +92,140 @@ vLLM live, benchmark numbers published (176.24 tokens/s at the knee,
 concurrency 2), model locked since day 4. The Engine Swap badge for the
 week.
 
-## Notes
-
-- `bench.py` and `prompts.txt` are given in full by the course, not
-  written by hand - the CLI contract (`--base-url`, `--model`,
-  `--concurrency`, `--requests-per-level`, `--prompt-file`, `--out`) and
-  the output schema (`{"runs": [...]}`, each with a `levels` list) are
-  fixed and graded against exactly. Both files were reconstructed from the
-  official course repo (`ai-datacenter-bootcamp-labs`) after the S3-hosted
-  copy's presigned link expired, and diffed line-for-line against the
-  repo's own `prompts.txt` to confirm an exact match before use.
-- The harness fires one warm-up request per concurrency level (not just
-  once at the start of the whole sweep) and excludes it from the
-  statistics, so a cold cache at any single level cannot skew that level's
-  numbers.
-- `bench_report.json` is additive: each run appends to a `runs` list
-  rather than overwriting the file, so `verify_cell.py` grades
-  `document["runs"][-1]` - the most recent sweep - rather than assuming
-  the file holds exactly one run.
-- Same isolated Python 3.10 virtual environment pattern as days 3-4
-  (`vllm==0.6.*`, `autoawq==0.2.*`) - vLLM's wheels target older Python
-  than Colab's current base image ships.
-- A peer's independently-run sweep (Dema Alrashidi) produced an identical
-  green-check message format (`levels: 5, concurrencies: [1, 2, 4, 8,
-  16], total errors: 0`), confirming this session's harness invocation and
-  output schema matched the graded contract exactly.
-
 Files: `bench_report.json`, `knee.json`, `capacity-note.md`
+
+## Bug Lab: the benchmark that graded the wrong contestant
+
+Given, deliberately broken: a loop timing multiple context lengths with no
+warm-up call. The first config tested absorbs a one-time CUDA/allocator
+cost that has nothing to do with prompt length, making it look artificially
+slow regardless of which config happens to run first.
+
+### Reproducing the bug
+
+```python
+results = {}
+for context in [128, 512, 2048]:
+    prompt = prompt_of_len(context)
+    t0 = time.time()
+    out = model.generate(**tok(prompt, return_tensors="pt").to("cuda"), max_new_tokens=32)
+    results[context] = time.time() - t0
+```
+
+```
+128:  2.622s
+512:  1.120s
+2048: 1.333s
+```
+
+128 tokens (the shortest prompt) came out slowest, more than 2x the
+512-token result - backwards from every theory the week covered.
+
+![bug reproduced: 128 (shortest) is slowest at 2.622s](images/W3D5-Bug-1-reproduced-128-slowest.png)
+
+### Confirming it's a loop-position effect, not a real property
+
+Reordering the list to `[2048, 512, 128]` and rerunning:
+
+```
+2048: 1.384s
+512:  1.093s
+128:  1.085s
+```
+
+Whichever config now runs first (2048) becomes the slowest, and the
+previous slowest (128) becomes the fastest - conclusive proof the "slow"
+result tracks loop position, not prompt length.
+
+![reordered list confirms it: 2048 is now slowest since it runs first](images/W3D5-Bug-2-confirmed-reordered-2048-slowest.png)
+
+### First fix attempt hit the lab's own documented failure mode
+
+A warm-up call at 64 tokens was tried first:
+
+```python
+_ = model.generate(**tok(prompt_of_len(64), return_tensors="pt").to("cuda"), max_new_tokens=8)
+```
+
+Result: `128: 1.088s, 512: 1.085s, 2048: 1.531s` - the assertion
+`results[128] < results[512] < results[2048]` failed, since 128 came out
+marginally slower than 512. This matches the lab's own named failure mode
+exactly: a warm-up shorter than the shortest real config doesn't fully
+prime every kernel path the real configs exercise.
+
+### Verified fix: warm-up length matched to the shortest real config
+
+```python
+_ = model.generate(**tok(prompt_of_len(128), return_tensors="pt").to("cuda"), max_new_tokens=8)
+
+results = {}
+for context in [128, 512, 2048]:
+    prompt = prompt_of_len(context)
+    t0 = time.time()
+    out = model.generate(**tok(prompt, return_tensors="pt").to("cuda"), max_new_tokens=32)
+    results[context] = time.time() - t0
+
+assert results[128] < results[512] < results[2048]
+print("GREEN CHECK: PASS")
+```
+
+```
+128:  1.055s
+512:  1.088s
+2048: 1.359s
+GREEN CHECK: PASS
+```
+
+![fixed with a 128-token warm-up: latency now climbs monotonically with context](images/W3D5-Bug-3-fixed-with-longer-warmup-green-check.png)
+
+## Extra Lab: cost per million tokens and the scale-out breakeven
+
+Pure arithmetic on this afternoon's own `bench_report.json` levels - no GPU
+needed. Converts the knee's tokens/s into a dollar figure, then finds the
+scale-out point where adding a second GPU replica beats pushing
+concurrency further on one card.
+
+### Cost per level (at $0.35/GPU-hour)
+
+| concurrency | tokens/s | p95 | $/M tokens |
+|---|---|---|---|
+| 1 | 94.5 | 1.37s | $1.0285 |
+| **2** | **176.2** | **1.40s** | **$0.5516** |
+| 4 | 302.1 | 1.64s | $0.3219 |
+| 8 | 491.0 | 1.93s | $0.198 |
+| 16 | 716.4 | 2.40s | $0.1357 |
+
+The same trap as this afternoon, priced in dollars: concurrency 16 looks
+7x cheaper per million tokens than the knee, but its p95 already exceeds
+the 1.5s SLO - the cheapest number on the table is past the point where
+it's honest capacity.
+
+```
+knee: concurrency=2, $0.5516/M tokens
+cheapest past-knee (SLO-violating): concurrency=16, $0.1357/M tokens
+-> cheaper on paper, but its p95 already exceeds your SLO
+```
+
+### Scale-out plan: replicas at the knee, not concurrency past it
+
+| target (x knee) | required tok/s | replicas | hourly cost | p95 |
+|---|---|---|---|---|
+| 1.0x | 176.24 | 1 | $0.35 | 1.401s |
+| 1.5x | 264.36 | 2 | $0.70 | 1.401s |
+| 2.0x | 352.48 | 2 | $0.70 | 1.401s |
+| 3.0x | 528.72 | 3 | $1.05 | 1.401s |
+
+`effective_p95_s` holds constant at 1.4013s across every scale level -
+every replica runs at the same safe knee concurrency, so p95 never
+degrades regardless of how many replicas are added. This is the entire
+argument for scaling out over pushing one GPU past its knee: latency stays
+flat, cost scales linearly and predictably with replica count.
+
+### Green check
+
+```
+recomputed costs, knee and scale-out plan all agree
+GREEN CHECK: PASS
+```
+
+Files: `extra-lab/cost_report.json`, `bug-lab/` (diagnosis notes)
