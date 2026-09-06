@@ -1,0 +1,1 @@
+{"cluster": "pod:aidc-t15", "namespace": "khawlah", "pod": "serving", "image": "khawlahup/aidc-serving:cpu-v1", "node": "aidc-t15", "chat_status": 200}
