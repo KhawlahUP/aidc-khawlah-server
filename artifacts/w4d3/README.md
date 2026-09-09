@@ -49,6 +49,8 @@ cpu     6200m (22%) requested, 12 (42%) limits
 memory  19084Mi (32%) requested, 36010Mi (61%) limits
 ```
 
+![node ledger after Step 1: requests and limits allocated](images/W4D3-1-step1-resources-allocated.png)
+
 ### Step 2: overdraw CPU on purpose
 
 ```
@@ -89,6 +91,8 @@ naming the GPU specifically - exactly what a mis-scheduled GPU workload
 looks like on a real cluster: not a CUDA error, a pod that sits Pending
 while the scheduler explains why in plain accounting terms.
 
+![Pending with Insufficient nvidia.com/gpu - the card was already held](images/W4D3-2-gpu-insufficient-pending.png)
+
 ### Step 4: the noisy neighbour, measured twice
 
 20 burner replicas against the node's 28 cores (scaled up from the
@@ -100,11 +104,15 @@ lab's default of 2, sized for this pod rather than a 4-core laptop).
 LATENCY n=573 fails=0 p50=2ms p95=3ms
 ```
 
+![latency probe under 20 unlimited burners](images/W4D3-3-latency-unlimited-burners.png)
+
 **CPU-limited burners** (`limits: cpu: 500m` each):
 
 ```
 LATENCY n=574 fails=0 p50=2ms p95=3ms
 ```
+
+![latency probe under 20 burners limited to 500m each](images/W4D3-4-latency-limited-burners.png)
 
 The limit produced no measurable difference in this run - both p95s landed
 at 3ms. The reason is visible in Step 1: `serving` already carries a
