@@ -1,0 +1,28 @@
+image: khawlahup/aidc-serving:cpu-v1
+
+replicas: 1
+
+backend: echo
+modelId: Qwen/Qwen2.5-0.5B-Instruct
+
+apiKey: ""
+apiKeySecret: ""
+
+service:
+  type: ClusterIP
+  nodePort: 30800
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 3Gi
+
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUPercent: 70
+  scaleDownStabilizationSeconds: 300
